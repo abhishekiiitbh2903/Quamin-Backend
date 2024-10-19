@@ -52,4 +52,4 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
 
 @app.get("/")
 def greet():
-    return {"hello": "world"}
+    return {"Welcome dear Aviral , Have fun around Development 😊😊"}
