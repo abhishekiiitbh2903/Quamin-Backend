@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, ValidationError
+from pydantic import BaseModel,Field, field_validator, ValidationError
 from typing import Tuple, Dict
 
 class SendOTPRequest(BaseModel):
