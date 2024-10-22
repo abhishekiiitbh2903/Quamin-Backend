@@ -62,6 +62,8 @@ async def send_otp(
     otp_service: OTPService = Depends(get_otp_service),
 ):
     ip = request.headers.get('X-Forwarded-For', request.client.host)
+    if ip:
+      ip = ip.split(',')[0].strip()
     otp = otp_service.generate_otp()
     otp_service.save_otp(request_body.mobile_number, otp, ip)
     return {"message": "OTP generated", "otp": otp}
