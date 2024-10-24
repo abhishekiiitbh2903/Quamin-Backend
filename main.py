@@ -63,7 +63,7 @@ class OTPService:
                     status_code=status.HTTP_201_CREATED,
                     content={"message": "User registered successfully"},
                     headers={
-                        "Set-Cookie": f"quamin={token}; Path=/; HttpOnly; SameSite=None;" #TODO : secure to be added 
+                        "Set-Cookie": f"quamin={token}; Path=/; HttpOnly; SameSite=Lax;" #TODO : secure to be added 
                     }
                 )
             return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": "User registration failed"})
@@ -134,7 +134,7 @@ async def verify_otp(
             key="quamin",
             value=token,
             httponly=True,
-            samesite="None",  # TODO: Add 'Secure=True' when using HTTPS
+            samesite="lax",  # TODO: Add 'Secure=True' when using HTTPS
             path="/"
         )
         return JSONResponse(
