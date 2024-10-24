@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 from datetime import datetime, timedelta
 from pymongo.errors import DuplicateKeyError
+from fastapi import HTTPException, status
 
 class RequestLimitExceeded(Exception):
     """Custom exception for OTP request limit being exceeded."""
@@ -50,6 +51,19 @@ class MongoDBClient:
     def is_otp_expired(self, expiry_time, current_time):
         """Checks if the OTP has expired."""
         return current_time > expiry_time
+    
+    def token_handler(self, token: str, mobile_number: str):
+        collection = self.get_collection(self.db1, "tokens")
+        result = collection.update_one(
+            {"mobile_number": mobile_number}, 
+            {"$set": {"token": token}},       
+            upsert=True                        
+        )
+        if result.matched_count > 0:
+            print("Token updated for mobile number:", mobile_number)
+        else:
+            print("New token inserted for mobile number:", mobile_number)
+
 
     def insert_users(self, firstName, lastName, district, country, state, mobile_number):
         collection = self.get_collection(self.db1, "Users")
@@ -74,10 +88,6 @@ class MongoDBClient:
 
         try:
             collection.insert_one(new_user)
-            collection.update_one(
-            {"phone": mobile_number},
-            {"$set": {"verified": False}}
-        )
         except DuplicateKeyError:
             raise DuplicateUsers(2)
 
@@ -165,6 +175,61 @@ class MongoDBClient:
                 "verified": False
             }
             collection1.insert_one(document)
+
+    def login_send_otp(self, mobile: int,otp):
+        """Inserts or updates an OTP entry."""
+        try:
+            collection1 = self.get_collection(self.db1, "users")
+            collection2 = self.get_collection(self.db1, "Users")
+
+            current_time = self.get_current_time()
+            expiry_time = current_time + timedelta(minutes=5)
+            existing_user = collection2.find_one({"mobile_number": mobile})
+            if not existing_user:
+                raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="User not found. Please sign up first."
+                    )
+
+            existing_document = collection1.find_one({"phone": mobile})
+            request_times = []
+
+            if existing_document:
+                request_times = [
+                    t for t in existing_document.get("request_times", [])
+                    if t > current_time - timedelta(minutes=30)
+                ]
+
+                if len(request_times) >= 3:
+                    raise RequestLimitExceeded(3)
+
+                request_times.append(current_time)
+                update_result=collection1.update_one(
+                    {"phone": mobile},
+                    {"$set": {
+                        "otp": otp,
+                        "expiry_time": expiry_time,
+                        "request_times": request_times,
+                        "attempts": 0,
+                        "verified": False
+                    }}
+                )
+                if update_result.modified_count == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to update OTP. Please try again."
+                    )
+
+                return {"message": "OTP sent successfully","otp":otp}
+
+        except HTTPException as http_exc:
+                raise http_exc
+
+        except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"An unexpected error occurred: {str(e)}"
+                )
 
     def verify_otp(self, collection_name, mobile: int, otp: int):
         """Verifies the OTP for the given mobile number."""
