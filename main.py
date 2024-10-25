@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from mongo_module import MongoDBClient, MaxAttemptsExceeded, Invalid, NoRecord, RequestLimitExceeded, Expired, DuplicateUsers, UnAuthorized
 from cors import add_cors_middleware
 import random
-from validation_module import SendOTPRequest, VerifyOTPRequest ,SendLogoutRequest
+from validation_module import SendOTPRequest, VerifyOTPRequest 
 from validation_SignupForm import InsertUserRequest
 from jwt import JWTManager ,JWTError
 import uuid
@@ -207,6 +207,7 @@ async def logout(request: Request, response: Response):
     Receives the token in the headers from the frontend, extracts a value from the token payload,
     and adds it to the 'blacklisted' collection in the database.
     """
+
     # Fetch the token from the 'Authorization' header
     auth_header: Optional[str] = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -235,6 +236,13 @@ async def logout(request: Request, response: Response):
             raise ValueError("Token payload does not contain 'random' field.")
 
         mongo_client.logout_handler(random_value)
+
+        # Return success response  and set the 'verified' field to False
+        mongo_client=MongoDBClient("OTPAuthentication")
+        user=mongo_client.get_collection(mongo_client.db1,"users")
+        if user is not None:
+            user.find_one({"mobile_number": user_info.get("mobile_number")})
+            user.update_one({"mobile_number": user_info.get("mobile_number")}, {"$set": {"verified": False}})
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"message": "Logout successful"}
