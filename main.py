@@ -207,7 +207,7 @@ async def logout(request: Request, response: Response):
     Receives the token in the headers from the frontend, extracts a value from the token payload,
     and adds it to the 'blacklisted' collection in the database.
     """
-
+    mongo_client=MongoDBClient("OTPAuthentication")
     # Fetch the token from the 'Authorization' header
     auth_header: Optional[str] = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -238,7 +238,6 @@ async def logout(request: Request, response: Response):
         mongo_client.logout_handler(random_value)
 
         # Return success response  and set the 'verified' field to False
-        mongo_client=MongoDBClient("OTPAuthentication")
         user=mongo_client.get_collection(mongo_client.db1,"users")
         if user is not None:
             user.find_one({"mobile_number": user_info.get("mobile_number")})
