@@ -1,13 +1,14 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, status,Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from mongo_module import MongoDBClient, MaxAttemptsExceeded, Invalid, NoRecord, RequestLimitExceeded, Expired, DuplicateUsers,UnAuthorized
+from mongo_module import MongoDBClient, MaxAttemptsExceeded, Invalid, NoRecord, RequestLimitExceeded, Expired, DuplicateUsers, UnAuthorized
 from cors import add_cors_middleware
 import random
 from validation_module import SendOTPRequest, VerifyOTPRequest ,SendLogoutRequest
 from validation_SignupForm import InsertUserRequest
 from jwt import JWTManager ,JWTError
-
+import uuid
+from typing import Optional
 
 app = FastAPI()
 add_cors_middleware(app)
@@ -55,16 +56,18 @@ class OTPService:
             if user_collection is not None:
                 document=user_collection.find_one({"phone":mobile_number})
                 verification_status = document.get("verified", False) if document else False
+            User_collection=mongo_client.get_collection(mongo_client.db1,"Users")
+            if User_collection is not None:
+                document=User_collection.find_one({"mobile_number":mobile_number})
+                first_name = document.get("firstName") if document else None
+                last_name = document.get("lastName") if document else None
             if result:  
-                token_data = {"mobile_number": mobile_number,"is_verified":verification_status}
+                token_data = {"mobile_number": mobile_number,"is_verified":verification_status,"first_name":first_name,"last_name":last_name,"random":str(uuid.uuid4())}
                 token = jwt_manager.generate_token(token_data)
                 mongo_client.token_handler(token,mobile_number)
                 return JSONResponse(
                     status_code=status.HTTP_201_CREATED,
-                    content={"message": "User registered successfully"},
-                    headers={
-                        "Set-Cookie": f"quamin={token}; Path=/; HttpOnly; Secure; SameSite=None;" #TODO : secure to be added 
-                    }
+                    content={"message": "User registered successfully","jwt_token":token},
                 )
             return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": "User registration failed"})
         except HTTPException as http_exc:
@@ -103,45 +106,44 @@ async def verify_otp(
     return otp_service.verify_otp(request_body.mobile_number, request_body.otp)
 
 @app.post("/login/verify-otp/")
-async def verify_otp(
-    request:Request,
+def verify_otp(
     response:Response,
     request_body: VerifyOTPRequest,
     otp_service: OTPService = Depends(get_otp_service),
     jwt_manager: JWTManager = Depends(get_jwt_manager),
     mongo_client: MongoDBClient = Depends(get_mongo_client)
-
 ):
     """Verifies the OTP and raises HTTP exceptions for errors."""
     result=otp_service.verify_otp(request_body.mobile_number, request_body.otp)
     if result:
         user_collection=mongo_client.get_collection(mongo_client.db1,"users")
-        updated_document = user_collection.find_one({"phone": request_body.mobile_number})
-        verification_status = updated_document.get("verified", False)
-
-        # Generate a JWT token with the updated user info
+        User_collection=mongo_client.get_collection(mongo_client.db1,"Users")
+        updated_document_user = user_collection.find_one({"phone": request_body.mobile_number})
+        updated_document_User = User_collection.find_one({"mobile_number": request_body.mobile_number})
+        verification_status = updated_document_user.get("verified", False)
+        if updated_document_User is not None:
+            first_name = updated_document_User.get("firstName")
+            last_name = updated_document_User.get("lastName")
+        
         token_data = {
             "mobile_number": request_body.mobile_number,
-            "is_verified": verification_status
+            "is_verified": verification_status,
+            "first_name": first_name,
+            "last_name": last_name,
+            "random":str(uuid.uuid4())
         }
+        # print(token_data)
         token = jwt_manager.generate_token(token_data)
-
-        # Store the token in the database
         mongo_client.token_handler(token, request_body.mobile_number)
-
-        # Set the token in a secure HTTP-only cookie
         response.set_cookie(
             key="quamin",
-            value=token,
-            httponly=True,       # Ensure it's HttpOnly if you're only accessing it server-side.
-            secure=True,         # Required for HTTPS.
-            samesite="None",     # Allow cross-origin requests.
-            path="/"             # Make sure it's accessible for all paths.
+            value="abhishek"
         )
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
-            content={"message": "OTP Verified"}
+            content={"message": "OTP Verified","jwt_token":token}
         )
+
 
 @app.post("/register-user/")
 async def register_user(user_data: InsertUserRequest, otp_service: OTPService = Depends(get_otp_service)):
@@ -155,147 +157,99 @@ def profile(request: Request):
     A protected route that requires a valid JWT token to access the user's profile.
     It checks if the user is verified and ensures the token is valid and not tampered with.
     """
-    try:
-        token = request.cookies.get("quamin")
-        if not token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Access denied: Token is missing. Please log in to access your profile."
-            )
-
-        jwt_manager = JWTManager()
-        token_docs = mongo_client.get_collection(mongo_client.db1, "tokens")
-
-        try:
-            user_info = jwt_manager.verify_token(token)
-        except JWTError as jwt_error:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Access denied: Invalid or expired token. Please log in again."
-            ) from jwt_error
-
-        
-        token_db = token_docs.find_one({"mobile_number": user_info["mobile_number"]})
-        if not token_db or token_db.get("token") != token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Access denied: Invalid token."
-            )
-
-        
-        if not user_info.get("is_verified", False):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: Your account is not verified. Please verify your account to access your profile."
-            )
-
-        
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"message": "Access granted", "user": user_info}
-        )
-
-    except HTTPException as http_exc:
-        raise http_exc  
-
-    except Exception as e:
-        
+    mongo_client = MongoDBClient("OTPAuthentication")
+    blacklist_collection=mongo_client.get_collection(mongo_client.db1,"blacklist")
+    auth_header: Optional[str] = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred: {str(e)}"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access denied: Token is missing or malformed."
         )
-# @app.post("/update-user")
-# def update_user(
 
-# ):
-#     pass
+    token = auth_header[len("Bearer "):]
+
+    jwt_manager = JWTManager()
+    try:
+        user_info = jwt_manager.verify_token(token)
+    except JWTError as jwt_error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access denied: Invalid or expired token."
+        ) from jwt_error
+
+    if not user_info.get("is_verified"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access denied: User is not verified."
+        )
+
+    if blacklist_collection is not None:
+        if blacklist_collection.find_one({"random": user_info.get("random")}) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Access denied: Token is blacklisted."
+            )
+        
+    token_collection=mongo_client.get_collection(mongo_client.db1,"token")
+    if token_collection is not None:
+        if token_collection.find_one({"mobile_number": user_info.get("mobile_number")}) is not None:
+            if token != token_collection.find_one({"mobile_number": user_info.get("mobile_number")})["token"]:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Access denied: Invalid token."
+                )
+
+    return {"message": "Protected route accessed successfully"}
+
 @app.post("/logout")
-def logout(
-    request: Request, 
-    response: Response, 
-    request_body: SendLogoutRequest
-):
+async def logout(request: Request, response: Response):
     """
-    Logs out the user by invalidating the session and setting the 'verified' status to False.
-    Ensures the mobile number in the token payload matches the request body.
+    Receives the token in the headers from the frontend, extracts a value from the token payload,
+    and adds it to the 'blacklisted' collection in the database.
     """
-    try:
-        token = request.cookies.get("quamin")
-        if not token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Logout failed: No active session found (missing cookie)."
-            )
-        
-        jwt_manager = JWTManager()
-        token_docs = mongo_client.get_collection(mongo_client.db1, "tokens")
-
-        try:
-            user_info = jwt_manager.verify_token(token)
-        except JWTError as jwt_error:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Access denied: Invalid or expired token. Please log in again."
-            ) from jwt_error
-
-        
-        token_db = token_docs.find_one({"mobile_number": user_info["mobile_number"]})
-        if not token_db or token_db.get("token") != token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Access denied: Invalid token."
-            )
-        
-        mongo_client = MongoDBClient("OTPAuthentication")
-        user_collection = mongo_client.get_collection(mongo_client.db1, "users")
-
-        if user_collection is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Database error: Users collection not found."
-            )
-
-        document = user_collection.find_one({"phone": request_body.mobile_number})
-        if not document:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found."
-            )
-
-        update_result = user_collection.update_one(
-            {"phone": request_body.mobile_number}, {"$set": {"verified": False}}
+    # Fetch the token from the 'Authorization' header
+    auth_header: Optional[str] = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access denied: Token is missing or malformed."
         )
 
-        if update_result.modified_count == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Logout failed: Unable to update user status."
-            )
+    # Extract the token (remove 'Bearer ' prefix)
+    token = auth_header[len("Bearer "):]
 
-        response.delete_cookie(key="quamin", path="/", samesite="None")
+    # Verify and decode the token
+    jwt_manager = JWTManager()
+    try:
+        user_info = jwt_manager.verify_token(token)
+    except JWTError as jwt_error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access denied: Invalid or expired token."
+        ) from jwt_error
 
+    # Add token to the blacklist
+    try:
+        random_value = user_info.get("random")
+        if not random_value:
+            raise ValueError("Token payload does not contain 'random' field.")
+
+        mongo_client.logout_handler(random_value)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"message": "Logged out successfully and user verified status set to False."}
+            content={"message": "Logout successful"}
         )
-
-    except HTTPException as http_exc:
-        raise http_exc  
-
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {str(e)}"
         )
-
+    
 
 @app.post("/login/send-otp/")
-def login(
-    request: Request,
-    response: Response,
+def login( 
     request_body: SendOTPRequest,
     otp_service: OTPService = Depends(get_otp_service),
-    jwt_manager: JWTManager = Depends(get_jwt_manager),
     mongo_client: MongoDBClient = Depends(get_mongo_client)
 ):
     """

@@ -64,6 +64,10 @@ class MongoDBClient:
         else:
             print("New token inserted for mobile number:", mobile_number)
 
+    def logout_handler(self, random:str):
+        collection = self.get_collection(self.db1, "blacklist")
+        collection.insert_one({"random": random})
+
 
     def insert_users(self, firstName, lastName, district, country, state, mobile_number):
         collection = self.get_collection(self.db1, "Users")
@@ -117,7 +121,7 @@ class MongoDBClient:
 
         unique_mobile_numbers = {attempt["mobile_number"] for attempt in recent_attempts}
 
-        if len(unique_mobile_numbers) >= 3:
+        if len(unique_mobile_numbers) >= 4:
             return False  
 
         collection.update_one(
