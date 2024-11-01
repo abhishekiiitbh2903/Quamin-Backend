@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Request, status,Response
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from mongo_module import MongoDBClient, MaxAttemptsExceeded, Invalid, NoRecord, RequestLimitExceeded, Expired, DuplicateUsers, UnAuthorized
+from mongo_module import MongoDBClient, MaxAttemptsExceeded, Invalid, NoRecord, RequestLimitExceeded, Expired, DuplicateUsers, UnAuthorized ,TokenNotFound , ipAddressLimitExceeded ,userNotFound ,TokenExpired , Unverified,Blacklisted , InvalidToken
 from cors import add_cors_middleware
 import random
 from validation_module import SendOTPRequest, VerifyOTPRequest 
@@ -161,10 +161,7 @@ def profile(request: Request):
     blacklist_collection=mongo_client.get_collection(mongo_client.db1,"blacklist")
     auth_header: Optional[str] = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access denied: Token is missing or malformed."
-        )
+        raise TokenNotFound(11)
 
     token = auth_header[len("Bearer "):]
 
@@ -172,32 +169,20 @@ def profile(request: Request):
     try:
         user_info = jwt_manager.verify_token(token)
     except JWTError as jwt_error:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access denied: Invalid or expired token."
-        ) from jwt_error
+        raise TokenExpired(12) from jwt_error
 
     if not user_info.get("is_verified"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access denied: User is not verified."
-        )
+        raise Unverified(13)
 
     if blacklist_collection is not None:
         if blacklist_collection.find_one({"random": user_info.get("random")}) is not None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Access denied: Token is blacklisted."
-            )
+            raise Blacklisted(14)
         
     token_collection=mongo_client.get_collection(mongo_client.db1,"token")
     if token_collection is not None:
         if token_collection.find_one({"mobile_number": user_info.get("mobile_number")}) is not None:
             if token != token_collection.find_one({"mobile_number": user_info.get("mobile_number")})["token"]:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Access denied: Invalid token."
-                )
+                raise InvalidToken(15)
 
     return {"message": "Protected route accessed successfully"}
 
@@ -211,10 +196,7 @@ async def logout(request: Request, response: Response):
     # Fetch the token from the 'Authorization' header
     auth_header: Optional[str] = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access denied: Token is missing or malformed."
-        )
+        raise TokenNotFound(11)
 
     # Extract the token (remove 'Bearer ' prefix)
     token = auth_header[len("Bearer "):]
@@ -224,10 +206,7 @@ async def logout(request: Request, response: Response):
     try:
         user_info = jwt_manager.verify_token(token)
     except JWTError as jwt_error:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access denied: Invalid or expired token."
-        ) from jwt_error
+        raise TokenExpired(12) from jwt_error
 
     # Add token to the blacklist
     try:
@@ -334,6 +313,34 @@ async def duplicate_users_exception_handler(request: Request, exc: DuplicateUser
 @app.exception_handler(UnAuthorized)
 async def duplicate_users_exception_handler(request: Request, exc: UnAuthorized):
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+@app.exception_handler(TokenNotFound)    
+async def token_not_found_exception_handler(request: Request, exc: TokenNotFound):    
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})    
+
+@app.exception_handler(TokenExpired)
+async def token_expired_exception_handler(request: Request, exc: TokenExpired):
+    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": str(exc)})
+
+@app.exception_handler(Unverified)
+async def unverified_exception_handler(request: Request, exc: Unverified):
+    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": str(exc)})
+
+@app.exception_handler(Blacklisted)
+async def blacklisted_exception_handler(request: Request, exc: Blacklisted):
+    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": str(exc)})
+
+@app.exception_handler(ipAddressLimitExceeded) 
+async def ipAddressLimitExceeded_exception_handler(request: Request, exc: ipAddressLimitExceeded):
+    return JSONResponse(status_code=status.HTTP_429_TOO_MANY_REQUESTS, content={"detail": str(exc)})
+
+@app.exception_handler(InvalidToken)
+async def invalid_token_exception_handler(request: Request, exc: InvalidToken):
+    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": str(exc)})
+
+@app.exception_handler(userNotFound)
+async def user_not_found_exception_handler(request: Request, exc: userNotFound):
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
 
 @app.get("/")
 def greet():

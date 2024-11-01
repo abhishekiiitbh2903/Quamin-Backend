@@ -31,13 +31,27 @@ class DuplicateUsers(Exception):
     pass
 class UnAuthorized(Exception):
     pass
+class ipAddressLimitExceeded(Exception):
+    pass
+class userNotFound(Exception):
+    pass
+class TokenNotFound(Exception):
+    pass
+class TokenExpired(Exception):
+    pass
+class Unverified(Exception):
+    pass
+class Blacklisted(Exception):
+    pass
+class InvalidToken(Exception):
+    pass
 
 class MongoDBClient:
     def __init__(self, db_name):
         """Initializes the MongoDBClient with the specified databases."""
         load_dotenv()
         uri1 = os.getenv("MONGO_URI1")
-        self.client1 = MongoClient(uri1, server_api=ServerApi('1'))
+        self.client1 = MongoClient(uri1)
         self.db1 = self.client1[db_name]
 
     def get_collection(self, db, collection_name):
@@ -119,9 +133,22 @@ class MongoDBClient:
             if attempt["attempt_time"] >= cutoff_time
         ]
 
+      # Remove expired attempts from the list
+        collection.update_one(
+        {"_id": ip},
+        {"$set": {"attempts": recent_attempts}}
+    )
+
+# Check if the IP has exceeded signup attempts in the last 24 hours for the mobile number received in a request
+        recent_attempts_of_mobile = [
+            attempt for attempt in document["attempts"]
+            if attempt["mobile_number"] == mobile
+        ]
+
         unique_mobile_numbers = {attempt["mobile_number"] for attempt in recent_attempts}
 
-        if len(unique_mobile_numbers) >3:
+
+        if len(unique_mobile_numbers) >=3 and len(recent_attempts_of_mobile)>=3:
             return False  
 
         collection.update_one(
@@ -133,7 +160,7 @@ class MongoDBClient:
     def insert_or_update_otp(self, mobile: int, otp: int, ip):
         """Inserts or updates an OTP entry."""
         if not self.can_signup(mobile, ip):
-            raise RequestLimitExceeded(1)
+            raise ipAddressLimitExceeded(9)
 
         collection1 = self.get_collection(self.db1, "users")
         collection2 = self.get_collection(self.db1, "Users")
@@ -190,10 +217,7 @@ class MongoDBClient:
             expiry_time = current_time + timedelta(minutes=5)
             existing_user = collection2.find_one({"mobile_number": mobile})
             if not existing_user:
-                raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="User not found. Please sign up first."
-                    )
+                raise userNotFound(10)
 
             existing_document = collection1.find_one({"phone": mobile})
             request_times = []
