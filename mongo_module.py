@@ -51,7 +51,7 @@ class MongoDBClient:
         """Initializes the MongoDBClient with the specified databases."""
         load_dotenv()
         uri1 = os.getenv("MONGO_URI1")
-        self.client1 = MongoClient(uri1)
+        self.client1 = MongoClient(uri1, server_api=ServerApi('1'))
         self.db1 = self.client1[db_name]
 
     def get_collection(self, db, collection_name):
