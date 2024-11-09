@@ -18,34 +18,89 @@ jwt_manager=JWTManager()
 
 class OTPService:
     def __init__(self, mongo_client: MongoDBClient):
+        """
+        Initialize the OTPService with the MongoDB client.
+
+        :param mongo_client: The MongoDB client instance.
+        """
+        if mongo_client is None:
+            raise ValueError("MongoDB client cannot be null.")
         self.mongo_client = mongo_client
 
     def generate_otp(self) -> int:
-        return random.randint(1000, 9999)
+        if self is None:
+            raise ValueError("Instance of OTPService cannot be null.")
+        try:
+            return random.randint(1000, 9999)
+        except Exception as e:
+            raise RuntimeError(f"Failed to generate OTP: {str(e)}")
 
     def save_otp(self, mobile_number: int, otp: int, ip: str):
-        result = self.mongo_client.insert_or_update_otp(mobile_number, otp, ip)
-        if isinstance(result, str):
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=result)
-        return result
+        """
+        Saves the OTP entry to the database.
+
+        :param mobile_number: The mobile number associated with the OTP.
+        :param otp: The generated OTP.
+        :param ip: The IP address of the user.
+        :return: The saved OTP entry.
+        """
+        if self.mongo_client is None:
+            raise ValueError("MongoDB client cannot be null.")
+        if mobile_number is None:
+            raise ValueError("Mobile number cannot be null.")
+        if otp is None:
+            raise ValueError("OTP cannot be null.")
+        if ip is None:
+            raise ValueError("IP address cannot be null.")
+        try:
+            result = self.mongo_client.insert_or_update_otp(mobile_number, otp, ip)
+            if isinstance(result, str):
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=result)
+            return result
+        except Exception as e:
+            raise e
 
     def verify_otp(self, mobile_number: int, otp: int):
-        result = self.mongo_client.verify_otp("users", mobile_number, otp)
-        self._handle_otp_verification_exceptions(result)
-        return {"message": "OTP verified successfully"}
+        """
+        Verifies the OTP for the given mobile number.
+
+        :param mobile_number: The mobile number associated with the OTP.
+        :param otp: The generated OTP.
+        :return: A message indicating that the OTP has been verified.
+        """
+        if mobile_number is None:
+            raise ValueError("Mobile number cannot be null.")
+        if otp is None:
+            raise ValueError("OTP cannot be null.")
+        try:
+            result = self.mongo_client.verify_otp("users", mobile_number, otp)
+            if result is None:
+                raise RuntimeError("OTP verification result was null.")
+            self._handle_otp_verification_exceptions(result)
+            return {"message": "OTP verified successfully"}
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
 
     def _handle_otp_verification_exceptions(self, result: str):
+        if result is None:
+            raise ValueError("Result cannot be null.")
+        
         error_mapping = {
             "Invalid OTP.": (status.HTTP_400_BAD_REQUEST, "Invalid OTP"),
             "OTP has expired.": (status.HTTP_401_UNAUTHORIZED, "OTP expired"),
             "No record found for the given phone number.": (status.HTTP_404_NOT_FOUND, "No record found for the given phone number"),
         }
-        if result.startswith("Invalid OTP. Attempts remaining"):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=result)
 
-        if result in error_mapping:
-            status_code, detail = error_mapping[result]
-            raise HTTPException(status_code=status_code, detail=detail)
+        try:
+            if result.startswith("Invalid OTP. Attempts remaining"):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=result)
+
+            if result in error_mapping:
+                status_code, detail = error_mapping[result]
+                raise HTTPException(status_code=status_code, detail=detail)
+        except Exception as e:
+            raise RuntimeError(f"Unhandled exception occurred: {str(e)}")
 
     def register_user(self,firstName,lastName,district,country,state,mobile_number):
         """Registers a new user."""
@@ -90,12 +145,22 @@ async def send_otp(
     request: Request,
     otp_service: OTPService = Depends(get_otp_service),
 ):
+    if request is None:
+        raise ValueError("Request cannot be null.")
     ip = request.headers.get('X-Forwarded-For', request.client.host)
-    if ip:
-      ip = ip.split(',')[0].strip()
+    if ip is None:
+        raise ValueError("IP address cannot be null.")
+    ip = ip.split(',')[0].strip()
+    if ip is None:
+        raise ValueError("IP address cannot be null.")
     otp = otp_service.generate_otp()
-    otp_service.save_otp(request_body.mobile_number, otp, ip)
-    return {"message": "OTP generated", "otp": otp}
+    if otp is None:
+        raise ValueError("OTP cannot be null.")
+    try:
+        otp_service.save_otp(request_body.mobile_number, otp, ip)
+        return {"message": "OTP generated", "otp": otp}
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 @app.post("/verify-otp/")
 async def verify_otp(
@@ -245,8 +310,9 @@ def login(
     try:
         # Generate OTP and send it to the user's phone
         otp = otp_service.generate_otp()
+        # print(otp)
         result = mongo_client.login_send_otp(request_body.mobile_number, otp)
-
+        # print(result)
         if not result:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -257,16 +323,9 @@ def login(
             status_code=status.HTTP_201_CREATED,
             content={"message": "OTP sent .","otp":otp}
         )
-
-    except HTTPException as http_exc:
-        raise http_exc  
-
+ 
     except Exception as e:
-       
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An unexpected error occurred: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
     
 
 

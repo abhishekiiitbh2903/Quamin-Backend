@@ -118,39 +118,45 @@ class MongoDBClient:
         now = self.get_current_time()
         cutoff_time = now - timedelta(hours=24)
 
+        # Retrieve the document for the IP address
         document = collection.find_one({"_id": ip})
 
         if not document:
+            # If no record exists for this IP, create a new one with the first attempt
             collection.insert_one({
                 "_id": ip,
                 "attempts": [{"mobile_number": mobile, "attempt_time": now}]
             })
             return True
 
-        
+        # Filter attempts within the last 24 hours
         recent_attempts = [
             attempt for attempt in document["attempts"]
             if attempt["attempt_time"] >= cutoff_time
         ]
 
-      # Remove expired attempts from the list
-        collection.update_one(
-        {"_id": ip},
-        {"$set": {"attempts": recent_attempts}}
-    )
+        # Get unique mobile numbers from recent attempts
+        unique_mobile_numbers = {attempt["mobile_number"] for attempt in recent_attempts}
 
-# Check if the IP has exceeded signup attempts in the last 24 hours for the mobile number received in a request
+        # Check if unique mobile numbers exceed limit
+        if len(unique_mobile_numbers) > 3:
+            return False
+
+        # If there are exactly 3 unique mobile numbers, check attempts for the given mobile
+        if len(unique_mobile_numbers) == 3 and mobile not in unique_mobile_numbers:
+            return False  # Adding a new unique number would exceed the limit
+
+        # Fetch recent attempts for the specific mobile number
         recent_attempts_of_mobile = [
-            attempt for attempt in document["attempts"]
+            attempt for attempt in recent_attempts
             if attempt["mobile_number"] == mobile
         ]
 
-        unique_mobile_numbers = {attempt["mobile_number"] for attempt in recent_attempts}
+        # Check if this mobile number has 3 attempts
+        if len(unique_mobile_numbers) >= 3 and len(recent_attempts_of_mobile) >= 3:
+            return False
 
-
-        if len(unique_mobile_numbers) >=3 and len(recent_attempts_of_mobile)>=3:
-            return False  
-
+        # If checks pass, log the new attempt
         collection.update_one(
             {"_id": ip},
             {"$push": {"attempts": {"mobile_number": mobile, "attempt_time": now}}}
@@ -208,8 +214,8 @@ class MongoDBClient:
             collection1.insert_one(document)
 
     def login_send_otp(self, mobile: int,otp):
-        """Inserts or updates an OTP entry."""
-        try:
+            """Inserts or updates an OTP entry."""
+    
             collection1 = self.get_collection(self.db1, "users")
             collection2 = self.get_collection(self.db1, "Users")
 
@@ -249,15 +255,6 @@ class MongoDBClient:
                     )
 
                 return {"message": "OTP sent successfully","otp":otp}
-
-        except HTTPException as http_exc:
-                raise http_exc
-
-        except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"An unexpected error occurred: {str(e)}"
-                )
 
     def verify_otp(self, collection_name, mobile: int, otp: int):
         """Verifies the OTP for the given mobile number."""
